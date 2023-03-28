@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="Always" remoteFilesAllowedToDisappearOnAutoupload="false" showNewOnTargetInSync="false">
+  <component name="PublishConfigData" autoUpload="Always" remoteFilesAllowedToDisappearOnAutoupload="false">
     <serverData>
-      <paths name="dcvl@114.70.23.12:22 key">
+      <paths name="114.70.23.12">
         <serverdata>
           <mappings>
-            <mapping deploy="/mnt/rbqlsquf/bts" local="$PROJECT_DIR$" />
+            <mapping deploy="/mnt/rbqlsquf/bts" local="$PROJECT_DIR$" web="/" />
+            <mapping local="" />
           </mappings>
         </serverdata>
       </paths>

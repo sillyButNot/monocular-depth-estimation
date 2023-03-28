@@ -21,7 +21,7 @@
 --multiprocessing_distributed
 --dist_url tcp://127.0.0.1:2345
 
-
+--checkpoint_path ./models/bts_eigen_v2_pytorch_test/model-epoch-35
 --log_freq 100
 --do_online_eval
 --eval_freq 500
