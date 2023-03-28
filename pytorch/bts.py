@@ -220,8 +220,12 @@ class bts(nn.Module):
         daspp_feat = self.daspp_conv(concat4_daspp)
         
         reduc8x8 = self.reduc8x8(daspp_feat)
+        #앞에 있는 3개정보만 normalization
+        #n1,n2,n3
         plane_normal_8x8 = reduc8x8[:, :3, :, :]
         plane_normal_8x8 = torch_nn_func.normalize(plane_normal_8x8, 2, 1)
+
+        # n4
         plane_dist_8x8 = reduc8x8[:, 3, :, :]
         plane_eq_8x8 = torch.cat([plane_normal_8x8, plane_dist_8x8.unsqueeze(1)], 1)
         depth_8x8 = self.lpg8x8(plane_eq_8x8, focal)
