@@ -2,11 +2,17 @@
 <project version="4">
   <component name="PublishConfigData" autoUpload="Always" remoteFilesAllowedToDisappearOnAutoupload="false">
     <serverData>
-      <paths name="114.70.23.12">
+      <paths name="dcvl@114.70.23.12:22 key">
         <serverdata>
           <mappings>
-            <mapping deploy="/mnt/rbqlsquf/bts" local="$PROJECT_DIR$" web="/" />
-            <mapping local="" />
+            <mapping deploy="/mnt/rbqlsquf/bts" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="rbqlsquf@114.70.21.136:22 password">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>
