@@ -19,8 +19,6 @@ import torch.nn as nn
 import torch.nn.functional as torch_nn_func
 import math
 
-from OrdinalRegression import OrdinalRegressionLayer
-from OrdinalRegression import OrdinalRegressionLoss
 from collections import namedtuple
 
 
@@ -160,6 +158,16 @@ class local_planar_guidance(nn.Module):
         return n4 / (n1 * u + n2 * v + n3)
 
 
+# 추가한 vertical pooling
+def vertical_pooling(x):
+    B, C, H, W = x.shape
+    x = x.permute(0, 2, 3, 1)
+    x = torch.reshape(x, (B, H, W, C // 4, 4))
+    x = torch.sum(x, dim=-1)
+    x = x.permute(0, 3, 1, 2)
+    return x
+
+
 class bts(nn.Module):
     def __init__(self, params, feat_out_channels, num_features=512):
         super(bts, self).__init__()
@@ -213,11 +221,6 @@ class bts(nn.Module):
         self.get_depth = torch.nn.Sequential(nn.Conv2d(num_features // 16, 1, 3, 1, 1, bias=False),
                                              nn.Sigmoid())
 
-        ########################
-        self.regression_layer = OrdinalRegressionLayer()
-        self.criterion = OrdinalRegressionLoss(90, 80, discretization="SID")
-
-
     def forward(self, features, focal):
         skip0, skip1, skip2, skip3 = features[0], features[1], features[2], features[3]
         dense_features = torch.nn.ReLU()(features[4])
@@ -243,11 +246,14 @@ class bts(nn.Module):
         daspp_24 = self.daspp_24(concat4_5)
         concat4_daspp = torch.cat([iconv4, daspp_3, daspp_6, daspp_12, daspp_18, daspp_24], dim=1)
         daspp_feat = self.daspp_conv(concat4_daspp)
-        # daspp_feat을 ordinal regression의 input
 
         reduc8x8 = self.reduc8x8(daspp_feat)
+        # 앞에 있는 3개정보만 normalization
+        # n1,n2,n3
         plane_normal_8x8 = reduc8x8[:, :3, :, :]
         plane_normal_8x8 = torch_nn_func.normalize(plane_normal_8x8, 2, 1)
+
+        # n4
         plane_dist_8x8 = reduc8x8[:, 3, :, :]
         plane_eq_8x8 = torch.cat([plane_normal_8x8, plane_dist_8x8.unsqueeze(1)], 1)
         depth_8x8 = self.lpg8x8(plane_eq_8x8, focal)
@@ -283,11 +289,6 @@ class bts(nn.Module):
 
         upconv1 = self.upconv1(iconv2)
         reduc1x1 = self.reduc1x1(upconv1)
-
-        # 마지막 concat 하는 부분
-        # dim =0 은 배치라서 dim 1을 기준으로 concat?
-        prob = self.regression_layer(daspp_feat)  # ASPP의 결과 값을 regression layer에 넣음
-
         concat1 = torch.cat([upconv1, reduc1x1, depth_2x2_scaled, depth_4x4_scaled, depth_8x8_scaled], dim=1)
         iconv1 = self.conv1(concat1)
         final_depth = self.params.max_depth * self.get_depth(iconv1)
