@@ -23,7 +23,7 @@
 
 --log_freq 100
 --do_online_eval
---eval_freq 50
+--eval_freq 500
 --data_path_eval ../../../dataset
 --gt_path_eval ../../../dataset/train
 --filenames_file_eval ../train_test_inputs/eigen_test_files_with_gt.txt
