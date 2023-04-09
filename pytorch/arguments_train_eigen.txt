@@ -1,5 +1,5 @@
 --mode train
---model_name bts_eigen_v2_pytorch_test
+--model_name bts_eigen_v2_pytorch_vetical
 --encoder densenet161_bts
 --dataset kitti
 --data_path ../../../dataset
@@ -23,7 +23,7 @@
 
 --log_freq 100
 --do_online_eval
---eval_freq 500
+--eval_freq 50
 --data_path_eval ../../../dataset
 --gt_path_eval ../../../dataset/train
 --filenames_file_eval ../train_test_inputs/eigen_test_files_with_gt.txt
