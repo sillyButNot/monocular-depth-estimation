@@ -166,7 +166,13 @@ def vertical_pooling(x):
     x = torch.sum(x, dim=-1)
     x = x.permute(0, 3, 1, 2)
     return x
-
+def vertical_pooling(x):
+    B, C, H, W = x.shape
+    x = x.permute(0, 2, 3, 1)
+    x = torch.reshape(x, (B, H, W, C // 4, 4))
+    x = torch.sum(x, dim=-1)
+    x = x.permute(0, 3, 1, 2)
+    return x
 
 class bts(nn.Module):
     def __init__(self, params, feat_out_channels, num_features=512):
