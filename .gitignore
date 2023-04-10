@@ -1,1 +1,3 @@
 *.idea
+/pytorch/models/bts_vertical/model-epoch-8
+*.gitignore
