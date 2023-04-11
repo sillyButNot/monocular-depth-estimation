@@ -12,7 +12,7 @@
       <paths name="monocualr">
         <serverdata>
           <mappings>
-            <mapping deploy="/mnt/rbqlsquf/bts" local="$PROJECT_DIR$" web="/" />
+            <mapping deploy="/mnt2/rbqlsquf/bts" local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>

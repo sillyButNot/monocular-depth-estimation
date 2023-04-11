@@ -1,3 +1,8 @@
 *.idea
 /pytorch/models/bts_vertical/model-epoch-8
 *.gitignore
+/pytorch/models/bts_eigen_v2_pytorch_test/model-epoch-10
+/pytorch/models/bts_eigen_v2_pytorch_test/model-epoch-20
+/pytorch/models/bts_eigen_v2_pytorch_test/model-epoch-30
+/pytorch/models/bts_eigen_v2_pytorch_test/model-epoch-40
+/pytorch/models/bts_eigen_v2_pytorch_test/model-epoch-49
