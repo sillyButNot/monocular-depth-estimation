@@ -21,7 +21,7 @@
 --multiprocessing_distributed
 --dist_url tcp://127.0.0.1:2345
 
---checkpoint_path ./models/bts_vertical_prob/model-epoch-11
+--checkpoint_path ./models/bts_vertical_prob/model-63500-best_silog_8.62271
 --log_freq 100
 --do_online_eval
 --eval_freq 500

@@ -3,7 +3,7 @@
 --dataset kitti
 --filenames_file ../train_test_inputs/eigen_test_files_with_gt.txt
 --model_name bts_vertical_prob
---checkpoint_path ./models/bts_vertical_prob/model-epoch-10
+--checkpoint_path ./models/bts_vertical_prob/model-epoch-20
 --input_height 352
 --input_width 1216
 --max_depth 80

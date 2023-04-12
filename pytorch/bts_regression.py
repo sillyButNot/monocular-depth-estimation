@@ -176,11 +176,64 @@ class VerticalPooling(nn.Module):
         B, C, H, W = x.shape
         x = x.permute(0, 2, 3, 1)
         x = torch.reshape(x, (B, H, W, self.out_channels, self.pool_size))
-        x = torch.sum(x, dim=-1)
+        x_probs = torch_nn_func.softmax(x, dim=-1)
+        x = torch.sum(x * x_probs, dim=-1)
         x = x.permute(0, 3, 1, 2)
         x = self.conv(x)
         return x
 
+
+class OrdinalRegressionLayer(nn.Module):
+    def __init__(self, in_channels):
+        super(OrdinalRegressionLayer, self).__init__()
+        self.in_channels = in_channels
+        self.ord_num = in_channels // 2
+
+    def forward(self, x):
+        """
+        :param x: NxCxHxW, N is batch_size, C is channels of features
+        :return: ord_label is ordinal outputs for each spatial locations , N x 1 x H x W
+                 ord prob is the probability of each label, N x OrdNum x H x W
+        """
+        N, C, H, W = x.size()
+
+        x = x.view(N, self.ord_num, 2, H, W).transpose(1, 2).contiguous()
+        x = x.view(N, 2 * self.ord_num, H, W)
+
+        if self.training:
+            ord_prob = torch_nn_func.log_softmax(x, dim=1) #입력과 출력의 차원이 같음
+            return ord_prob
+
+        ord_prob = torch_nn_func.softmax(x, dim=1)[:, 0, :, :]
+        ord_label = torch.sum((ord_prob > 0.5), dim=1).reshape((N, 1, H, W))
+        return ord_prob, ord_label
+
+
+def estimate_depth(ord_prob, ord_label=None):
+    depth_values = []
+    if ord_label is not None:
+        for i in range(len(ord_prob)):
+            depth = sum(ord_prob[i] * ord_label[i] for i in range(len(ord_prob)))
+            depth_values.append(depth)
+    else:
+        # During training, use the maximum ordinal value as the predicted depth value
+        _, ord_pred = torch.max(ord_prob, dim=1, keepdim=True)
+        depth_values = ord_pred.float()
+    return depth_values
+
+def estimate_depth(ord_prob, ord_label=None, height, width):
+    depth_values = []
+    N, C, H, W = ord_prob.size()
+    if ord_label is not None:
+        for i in range(len(ord_prob)):
+            depth = sum(ord_prob[i] * ord_label[i] for i in range(len(ord_prob)))
+            depth_values.append(depth)
+        depth_values = torch.stack(depth_values).view(N, 1, height, width)
+    else:
+        # During training, use the maximum ordinal value as the predicted depth value
+        _, ord_pred = torch.max(ord_prob, dim=1, keepdim=True)
+        depth_values = ord_pred.float().view(N, 1, height, width)
+    return depth_values
 
 class bts(nn.Module):
     def __init__(self, params, feat_out_channels, num_features=512):
@@ -239,6 +292,7 @@ class bts(nn.Module):
                                              nn.Sigmoid())
         ##수정
         self.vertical_pooling = VerticalPooling(feat_out_channels[2])
+        self.OrdinalRegression = OrdinalRegressionLayer()
 
     def forward(self, features, focal):
         skip0, skip1, skip2, skip3 = features[0], features[1], features[2], features[3]
@@ -311,10 +365,21 @@ class bts(nn.Module):
         ## 수정
         vertical_out = self.vertical_pooling(skip2)
 
-        vertical_out = torch.nn.functional.interpolate(vertical_out, size=(self.height, upconv1.size(3)), mode='nearest')
+        vertical_out = torch.nn.functional.interpolate(vertical_out, size=(self.height, upconv1.size(3)),
+                                                       mode='nearest')
+        if self.training:
+            ord_prob = self.ordinalRegression(x)
+            ord_label = None
+        else:
+            ord_prob, ord_label = self.OrdinalRegression(skip2)
+        depth_values = estimate_depth(ord_prob, ord_label, self.height,upconv1.size(3))
 
-        concat1 = torch.cat([upconv1, reduc1x1, depth_2x2_scaled, depth_4x4_scaled, depth_8x8_scaled, vertical_out],
-                            dim=1)
+        # concat1 = torch.cat([upconv1, reduc1x1, depth_2x2_scaled, depth_4x4_scaled, depth_8x8_scaled, vertical_out, depth_values],
+        #                     dim=1)
+        concat1 = torch.cat(
+            [upconv1, reduc1x1, depth_2x2_scaled, depth_4x4_scaled, depth_8x8_scaled, vertical_out],
+            dim=1)
+
         iconv1 = self.conv1(concat1)
 
         final_depth = self.params.max_depth * self.get_depth(iconv1)

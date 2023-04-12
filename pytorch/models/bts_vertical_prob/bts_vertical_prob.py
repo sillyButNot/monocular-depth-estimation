@@ -176,7 +176,7 @@ class VerticalPooling(nn.Module):
         B, C, H, W = x.shape
         x = x.permute(0, 2, 3, 1)
         x = torch.reshape(x, (B, H, W, self.out_channels, self.pool_size))
-        x_probs = torch_nn_func.softmax(x, dim=-2)
+        x_probs = torch_nn_func.softmax(x, dim=-1)
         x = torch.sum(x*x_probs, dim=-1)
         x = x.permute(0, 3, 1, 2)
         x = self.conv(x)
