@@ -18,8 +18,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as torch_nn_func
 import math
-import numpy as np
-from sklearn.svm import SVC
 
 from collections import namedtuple
 
@@ -160,54 +158,56 @@ class local_planar_guidance(nn.Module):
         return n4 / (n1 * u + n2 * v + n3)
 
 
-# OrdinalRegression
-class OrdinalRegression:
-    def __init__(self, num_classes):
-        self.num_classes = num_classes
-        self.svms = []  # List to store the binary SVMs
+###추가함수부분
 
-    def fit(self, X, y):
-        for i in range(1, self.num_classes):
-            # Create binary labels for pairwise comparisons
-            y_binary = np.where(y <= i, 0, 1)
+# class VerticalPooling(nn.Module):
+#     def __init__(self, in_channels):
+#         super(VerticalPooling, self).__init__()
+#         self.in_channels = in_channels
+#         self.out_channels = in_channels // 4
+#         self.pool_size = 4
+#         self.conv = nn.Conv2d(in_channels=self.in_channels // 4,
+#                               out_channels=self.out_channels,
+#                               kernel_size=1,
+#                               stride=1,
+#                               bias=False)
+#
+#     def forward(self, x):
+#         B, C, H, W = x.shape
+#         # x = x.permute(0, 2, 3, 1)
+#         x = torch.reshape(x, (B, H, W, self.out_channels, self.pool_size))
+#         x_probs = torch_nn_func.softmax(x, dim=-1)
+#         x = torch.sum(x*x_probs, dim=-1)
+#         x = x.permute(0, 3, 1, 2)
+#         x = self.conv(x)
+#         return x
 
-            features = X[:, :, i]
-            features = features.reshape(features.shape[0],-1)
 
-            # Train a binary SVM
-            svm = SVC(kernel='linear')
-            svm.fit(features, y_binary)
-            self.svms.append(svm)
+class VerticalPooling(nn.Module):
+    """
+    Vertical pooling layer implementation as described in the paper.
+    """
+    def __init__(self, kernel_heights=[5, 7, 11, 11], strides=[1, 1, 1, 1]):
+        super(VerticalPooling, self).__init__()
+        self.kernel_heights = kernel_heights
+        self.strides = strides
+        self.pool_layers = nn.ModuleList()
+        for i in range(len(kernel_heights)):
+            kernel_size = (kernel_heights[i], 1)
+            pool = nn.AvgPool2d(kernel_size=kernel_size, stride=strides[i], padding=(kernel_size[0]//2, 0))
+            self.pool_layers.append(pool)
 
-    def predict(self, X):
-        num_samples = X.shape[0]
-        num_svms = len(self.svms)
-
-        # Create an empty matrix to store the class probabilities
-        probabilities = np.zeros((num_samples, self.num_classes))
-
-        # Iterate over binary SVMs and accumulate probabilities
-        for i, svm in enumerate(self.svms):
-            features = X[:,:,i]
-
-            svm_probabilities = svm.decision_function(features)
-
-            probabilities[:, i + 1] = svm_probabilities
-
-        # Calculate cumulative probabilities
-        cumulative_probabilities = np.cumsum(probabilities, axis=1)
-
-        # Assign the class with the highest probability
-        predictions = np.argmax(cumulative_probabilities, axis=1)
-
-        return predictions
+    def forward(self, x):
+        outputs = [pool_layer(x) for pool_layer in self.pool_layers]
+        return torch.cat(outputs, dim=1)
 
 
 class bts(nn.Module):
     def __init__(self, params, feat_out_channels, num_features=512):
         super(bts, self).__init__()
         self.params = params
-
+        self.height = self.params.input_height
+        self.width = self.params.input_width
         self.upconv5 = upconv(feat_out_channels[4], num_features)
         self.bn5 = nn.BatchNorm2d(num_features, momentum=0.01, affine=True, eps=1.1e-5)
 
@@ -251,20 +251,15 @@ class bts(nn.Module):
 
         self.upconv1 = upconv(num_features // 8, num_features // 16)
         self.reduc1x1 = reduction_1x1(num_features // 16, num_features // 32, self.params.max_depth, is_final=True)
-        self.conv1 = torch.nn.Sequential(nn.Conv2d(num_features // 16 + 4, num_features // 16, 3, 1, 1, bias=False),
+        # 아래도 수정했음
+
+        self.conv1 = torch.nn.Sequential(nn.Conv2d(num_features // 16 + 4 + num_features // 16, num_features // 16, 3, 1, 1, bias=False),
                                          nn.ELU())
         self.get_depth = torch.nn.Sequential(nn.Conv2d(num_features // 16, 1, 3, 1, 1, bias=False),
                                              nn.Sigmoid())
-
-        #################################추가부분
-        self.full_image_encoder = nn.Sequential(
-            nn.AvgPool2d(kernel_size=3, stride=2, padding=1),
-            nn.Conv2d(num_features, num_features, kernel_size=1),
-            nn.ReLU(inplace=True)
-        )
-        self.ordinal_conv1 =nn.Conv2d(num_features, num_features // 2, kernel_size=1)
-        self.ordinal_conv2 = nn.Conv2d(num_features // 2, num_features // 4, kernel_size=1)
-        self.ordinal_final_conv = nn.Conv2d(num_features + num_features // 4 * 5, num_features, kernel_size=1)
+        ##수정
+        self.vertical_pooling = VerticalPooling()
+        self.conv_vertical = nn.Conv2d(768, 32, kernel_size=1)
     def forward(self, features, focal):
         skip0, skip1, skip2, skip3 = features[0], features[1], features[2], features[3]
         dense_features = torch.nn.ReLU()(features[4])
@@ -289,16 +284,6 @@ class bts(nn.Module):
         concat4_5 = torch.cat([concat4_4, daspp_18], dim=1)
         daspp_24 = self.daspp_24(concat4_5)
         concat4_daspp = torch.cat([iconv4, daspp_3, daspp_6, daspp_12, daspp_18, daspp_24], dim=1)
-
-        ########################################################
-        ordinal_full_image = self.full_image_encoder(skip3)
-        ordinal_skip1 = self.ordinal_conv1(skip2)
-        ordinal_skip2 = self.ordinal_conv2(ordinal_skip1)
-
-        concat_ordinal_daspp = torch.cat([ordinal_full_image,ordinal_skip2, daspp_3, daspp_12, daspp_18],dim = 1)
-
-
-        ####################################################
         daspp_feat = self.daspp_conv(concat4_daspp)
 
         reduc8x8 = self.reduc8x8(daspp_feat)
@@ -343,12 +328,18 @@ class bts(nn.Module):
 
         upconv1 = self.upconv1(iconv2)
         reduc1x1 = self.reduc1x1(upconv1)
-        concat1 = torch.cat([upconv1, reduc1x1, depth_2x2_scaled, depth_4x4_scaled, depth_8x8_scaled], dim=1)
+        ## 수정
+        vertical_out = self.vertical_pooling(skip2)
+        vertical_out = self.conv_vertical(vertical_out)
+        vertical_out = torch.nn.functional.interpolate(vertical_out, size=(self.height, upconv1.size(3)), mode='nearest')
+
+        concat1 = torch.cat([upconv1, reduc1x1, depth_2x2_scaled, depth_4x4_scaled, depth_8x8_scaled, vertical_out],
+                            dim=1)
         iconv1 = self.conv1(concat1)
+
         final_depth = self.params.max_depth * self.get_depth(iconv1)
         if self.params.dataset == 'kitti':
             final_depth = final_depth * focal.view(-1, 1, 1, 1).float() / 715.0873
-
         return depth_8x8_scaled, depth_4x4_scaled, depth_2x2_scaled, reduc1x1, final_depth
 
 

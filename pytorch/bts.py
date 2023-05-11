@@ -18,8 +18,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as torch_nn_func
 import math
+import numpy as np
+from sklearn.svm import SVC
 
 from collections import namedtuple
+import torch.nn.functional as F
 
 
 # This sets the batch norm layers in pytorch as if {'is_training': False, 'scale': True} in tensorflow
@@ -158,37 +161,57 @@ class local_planar_guidance(nn.Module):
         return n4 / (n1 * u + n2 * v + n3)
 
 
-###추가함수부분
+# OrdinalRegression
+class OrdinalRegression(nn.Module):
+    def __init__(self, num_features=816, num_classes=11):
+        super(OrdinalRegression, self).__init__()
+        self.num_features = num_features
+        self.num_classes = num_classes
+        self.classifiers = nn.ModuleList()
 
-class VerticalPooling(nn.Module):
+        for i in range(num_classes - 1):
+            classifier = nn.Sequential(
+                nn.Linear(num_features*22*44, 22*44),
+                nn.Sigmoid()
+            )
+            self.classifiers.append(classifier)
+
+        # self.final_conv = nn.Conv2d(num_classes - 1, 1, kernel_size=1)
+        self.final_conv = nn.Conv2d(num_classes - 1, 1, kernel_size=1)
+
+    def forward(self, x_origin):
+        outputs = []
+        x = x_origin.view(x_origin.size(0), -1)
+        # x = x.mean(dim=-1)  # Global average pooling along spatial dimensions
+
+        for classifier in self.classifiers:
+            output = classifier(x_origin)
+            outputs.append(output)
+            # outputs.append(output.squeeze(dim=1))
+        ordinal_output = torch.stack(outputs, dim=1)
+
+        ordinal_output = self.final_conv(ordinal_output)
+        ordinal_output = F.interpolate(ordinal_output, size=(352, 704), mode='bilinear', align_corners=False)
+        ordinal_output = ordinal_output.squeeze(dim=1)
+
+        return ordinal_output
+
+class CrossChannelParametricPooling(nn.Module):
     def __init__(self, in_channels):
-        super(VerticalPooling, self).__init__()
-        self.in_channels = in_channels
-        self.out_channels = in_channels // 4
-        self.pool_size = 4
-        self.conv = nn.Conv2d(in_channels=self.in_channels // 4,
-                              out_channels=self.out_channels,
-                              kernel_size=1,
-                              stride=1,
-                              bias=False)
+        super(CrossChannelParametricPooling, self).__init__()
+        self.conv = nn.Conv2d(in_channels, in_channels, kernel_size=1)
 
     def forward(self, x):
-        B, C, H, W = x.shape
-        x = x.permute(0, 2, 3, 1)
-        x = torch.reshape(x, (B, H, W, self.out_channels, self.pool_size))
-        x_probs = torch_nn_func.softmax(x, dim=-1)
-        x = torch.sum(x*x_probs, dim=-1)
-        x = x.permute(0, 3, 1, 2)
-        x = self.conv(x)
-        return x
-
+        pooled = torch.mean(x, dim=(2, 3), keepdim=True)
+        conv_out = self.conv(pooled)
+        repeated = conv_out.expand_as(x)
+        return repeated
 
 class bts(nn.Module):
     def __init__(self, params, feat_out_channels, num_features=512):
         super(bts, self).__init__()
         self.params = params
-        self.height = self.params.input_height
-        self.width = self.params.input_width
+
         self.upconv5 = upconv(feat_out_channels[4], num_features)
         self.bn5 = nn.BatchNorm2d(num_features, momentum=0.01, affine=True, eps=1.1e-5)
 
@@ -232,14 +255,27 @@ class bts(nn.Module):
 
         self.upconv1 = upconv(num_features // 8, num_features // 16)
         self.reduc1x1 = reduction_1x1(num_features // 16, num_features // 32, self.params.max_depth, is_final=True)
-        # 아래도 수정했음
-
-        self.conv1 = torch.nn.Sequential(nn.Conv2d(84, num_features // 16, 3, 1, 1, bias=False),
+        self.conv1 = torch.nn.Sequential(nn.Conv2d(num_features // 16 + 4, num_features // 16, 3, 1, 1, bias=False),
                                          nn.ELU())
         self.get_depth = torch.nn.Sequential(nn.Conv2d(num_features // 16, 1, 3, 1, 1, bias=False),
                                              nn.Sigmoid())
-        ##수정
-        self.vertical_pooling = VerticalPooling(feat_out_channels[2])
+
+        #################################추가부분
+        self.full_image_encoder = nn.Sequential(
+            nn.Upsample(size=(44, 88), mode='nearest'),
+            nn.Conv2d(384, 384, kernel_size=1),
+            nn.ReLU(inplace=True)
+        )
+        self.ordinal_conv1 =nn.Conv2d(192, 192 // 2, kernel_size=1)
+        self.ordinal_conv2 = nn.Conv2d(192 // 2, 192 // 4, kernel_size=1)
+        self.ordinal_final_conv = nn.Conv2d(num_features + num_features // 4 * 5, num_features, kernel_size=1)
+        self.avg_pool = nn.AvgPool2d(kernel_size=3, stride=2, padding=1)
+        self.fc = nn.Conv2d(816, 816, kernel_size=1)
+        self.cross_channel_pooling = CrossChannelParametricPooling(816)
+        self.ordinal_last_conv = torch.nn.Sequential(nn.Conv2d(816, 816, 3, 1, 1, bias=False),
+                                             nn.Sigmoid())
+        self.ordinal_classifier = OrdinalRegression()
+
 
     def forward(self, features, focal):
         skip0, skip1, skip2, skip3 = features[0], features[1], features[2], features[3]
@@ -265,6 +301,23 @@ class bts(nn.Module):
         concat4_5 = torch.cat([concat4_4, daspp_18], dim=1)
         daspp_24 = self.daspp_24(concat4_5)
         concat4_daspp = torch.cat([iconv4, daspp_3, daspp_6, daspp_12, daspp_18, daspp_24], dim=1)
+
+        ########################################################
+        ordinal_full_image = self.full_image_encoder(skip3)
+        ordinal_skip1 = self.ordinal_conv1(skip2)
+        ordinal_skip2 = self.ordinal_conv2(ordinal_skip1)
+
+        concat_ordinal_daspp = torch.cat([ordinal_full_image,ordinal_skip2, daspp_3, daspp_12, daspp_18],dim = 1)
+        pooled = self.avg_pool(concat_ordinal_daspp)
+        feature_vector = self.fc(pooled)
+
+        feature_maps = feature_vector.expand(-1, -1, feature_vector.size(2), feature_vector.size(3))
+        cross_channel_pooled = self.cross_channel_pooling(feature_maps)
+        ordinal_last_conv = self.ordinal_last_conv(cross_channel_pooled)
+        # ordinal_last_conv = F.interpolate(ordinal_last_conv, size=(22, 44), mode='bilinear', align_corners=False)
+        ordinal_output = self.ordinal_classifier(ordinal_last_conv)
+
+        ####################################################
         daspp_feat = self.daspp_conv(concat4_daspp)
 
         reduc8x8 = self.reduc8x8(daspp_feat)
@@ -309,18 +362,12 @@ class bts(nn.Module):
 
         upconv1 = self.upconv1(iconv2)
         reduc1x1 = self.reduc1x1(upconv1)
-        ## 수정
-        vertical_out = self.vertical_pooling(skip2)
-
-        vertical_out = torch.nn.functional.interpolate(vertical_out, size=(self.height, upconv1.size(3)), mode='nearest')
-
-        concat1 = torch.cat([upconv1, reduc1x1, depth_2x2_scaled, depth_4x4_scaled, depth_8x8_scaled, vertical_out],
-                            dim=1)
+        concat1 = torch.cat([upconv1, reduc1x1, depth_2x2_scaled, depth_4x4_scaled, depth_8x8_scaled], dim=1)
         iconv1 = self.conv1(concat1)
-
         final_depth = self.params.max_depth * self.get_depth(iconv1)
         if self.params.dataset == 'kitti':
             final_depth = final_depth * focal.view(-1, 1, 1, 1).float() / 715.0873
+
         return depth_8x8_scaled, depth_4x4_scaled, depth_2x2_scaled, reduc1x1, final_depth
 
 
