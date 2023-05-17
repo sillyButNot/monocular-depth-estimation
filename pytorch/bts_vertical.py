@@ -158,37 +158,34 @@ class local_planar_guidance(nn.Module):
         return n4 / (n1 * u + n2 * v + n3)
 
 
-###추가함수부분
+def vertical_pooling(x, kernel_sizes=[5, 7, 11, 15]):
+    outputs = []
 
-class VerticalPooling(nn.Module):
-    def __init__(self, in_channels):
-        super(VerticalPooling, self).__init__()
-        self.in_channels = in_channels
-        self.out_channels = in_channels // 4
-        self.pool_size = 4
-        self.conv = nn.Conv2d(in_channels=self.in_channels // 4,
-                              out_channels=self.out_channels,
-                              kernel_size=1,
-                              stride=1,
-                              bias=False)
+    x = torch_nn_func.pad(x, (0, 0, 1, 1, 0, 0))
 
-    def forward(self, x):
-        B, C, H, W = x.shape
-        x = x.permute(0, 2, 3, 1)
-        x = torch.reshape(x, (B, H, W, self.out_channels, self.pool_size))
-        x_probs = torch_nn_func.softmax(x, dim=-1)
-        x = torch.sum(x*x_probs, dim=-1)
-        x = x.permute(0, 3, 1, 2)
-        x = self.conv(x)
-        return x
+    for kernel_size in kernel_sizes:
+        if kernel_size == 5 or kernel_size == 7:
+            x = torch_nn_func.pad(x, (0, 0, 1, 1, 0, 0))
+        elif kernel_size == 11 or kernel_size == 15:
+            x = torch_nn_func.pad(x, (0, 0, 2, 2, 0, 0))
+        outputs.append(torch_nn_func.avg_pool2d(x, kernel_size=(kernel_size, 1), stride=1))
+
+    concatenated_array = outputs[0]
+
+
+    for array in outputs[1:]:
+        concatenated_array = torch.cat((concatenated_array, array), dim=1)
+
+
+    return concatenated_array
+
 
 
 class bts(nn.Module):
     def __init__(self, params, feat_out_channels, num_features=512):
         super(bts, self).__init__()
         self.params = params
-        self.height = self.params.input_height
-        self.width = self.params.input_width
+
         self.upconv5 = upconv(feat_out_channels[4], num_features)
         self.bn5 = nn.BatchNorm2d(num_features, momentum=0.01, affine=True, eps=1.1e-5)
 
@@ -232,14 +229,10 @@ class bts(nn.Module):
 
         self.upconv1 = upconv(num_features // 8, num_features // 16)
         self.reduc1x1 = reduction_1x1(num_features // 16, num_features // 32, self.params.max_depth, is_final=True)
-        # 아래도 수정했음
-
-        self.conv1 = torch.nn.Sequential(nn.Conv2d(84, num_features // 16, 3, 1, 1, bias=False),
+        self.conv1 = torch.nn.Sequential(nn.Conv2d(num_features // 16 + 1 + 12, num_features // 16, 3, 1, 1, bias=False),
                                          nn.ELU())
         self.get_depth = torch.nn.Sequential(nn.Conv2d(num_features // 16, 1, 3, 1, 1, bias=False),
                                              nn.Sigmoid())
-        ##수정
-        self.vertical_pooling = VerticalPooling(feat_out_channels[2])
 
     def forward(self, features, focal):
         skip0, skip1, skip2, skip3 = features[0], features[1], features[2], features[3]
@@ -309,18 +302,18 @@ class bts(nn.Module):
 
         upconv1 = self.upconv1(iconv2)
         reduc1x1 = self.reduc1x1(upconv1)
-        ## 수정
-        vertical_out = self.vertical_pooling(skip2)
 
-        vertical_out = torch.nn.functional.interpolate(vertical_out, size=(self.height, upconv1.size(3)), mode='nearest')
+        #vertical pooling 추가 부분
+        depth_2x2_scaled_vp = vertical_pooling(depth_2x2_scaled)
+        depth_4x4_scaled_vp = vertical_pooling(depth_4x4_scaled)
+        depth_8x8_scaled_vp = vertical_pooling(depth_8x8_scaled)
 
-        concat1 = torch.cat([upconv1, reduc1x1, depth_2x2_scaled, depth_4x4_scaled, depth_8x8_scaled, vertical_out],
-                            dim=1)
+        concat1 = torch.cat([upconv1, reduc1x1, depth_2x2_scaled_vp, depth_4x4_scaled_vp, depth_8x8_scaled_vp], dim=1)
         iconv1 = self.conv1(concat1)
-
         final_depth = self.params.max_depth * self.get_depth(iconv1)
         if self.params.dataset == 'kitti':
             final_depth = final_depth * focal.view(-1, 1, 1, 1).float() / 715.0873
+
         return depth_8x8_scaled, depth_4x4_scaled, depth_2x2_scaled, reduc1x1, final_depth
 
 

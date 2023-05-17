@@ -160,6 +160,38 @@ class local_planar_guidance(nn.Module):
         return n4 / (n1 * u + n2 * v + n3)
 
 
+#Ordinal regression
+def ordinal_regression(transition1):
+    # 깊이 특성을 재구성합니다.
+    features = torch.reshape(transition1, (-1, 4))
+
+    # 이진 SVM을 만듭니다.
+    svms = []  # 이진 SVM을 저장할 목록
+
+    for i in range(1, 5):
+        # 이진 레이블을 만듭니다.
+        y_binary = np.where(features <= i, 0, 1)
+
+        # 이진 SVM을 만듭니다.
+        svm = SVC(kernel='linear')
+        svm.fit(features, y_binary)
+        svms.append(svm)
+
+    # 깊이 예측을 수행합니다.
+    predictions = np.zeros((features.shape[0], 5))
+
+    # 이진 SVM을 반복하고 확률을 누적합니다.
+    for i, svm in enumerate(svms):
+        svm_probabilities = svm.decision_function(features)
+
+        predictions[:, i + 1] = svm_probabilities
+
+    # 누적 확률을 계산합니다.
+    cumulative_probabilities = np.cumsum(predictions, axis=1)
+
+    # 가장 높은 확률을 가진 클래스를 할당합니다.
+    return np.argmax(cumulative_probabilities, axis=1)
+
 # OrdinalRegression
 class OrdinalRegression:
     def __init__(self, num_classes):
