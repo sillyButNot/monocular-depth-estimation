@@ -116,7 +116,7 @@ def test(params):
             image = Variable(sample['image'].cuda())
             focal = Variable(sample['focal'].cuda())
             # Predict
-            lpg8x8, lpg4x4, lpg2x2, reduc1x1, depth_est = model(image, focal)
+            lpg8x8, lpg4x4, lpg2x2, reduc1x1, depth_est, _ = model(image, focal)
             pred_depths.append(depth_est.cpu().numpy().squeeze())
             pred_8x8s.append(lpg8x8[0].cpu().numpy().squeeze())
             pred_4x4s.append(lpg4x4[0].cpu().numpy().squeeze())

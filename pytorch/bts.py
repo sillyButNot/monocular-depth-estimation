@@ -185,7 +185,7 @@ class bts(nn.Module):
     def __init__(self, params, feat_out_channels, num_features=512):
         super(bts, self).__init__()
         self.params = params
-
+        self.num_classes = 256
         self.upconv5 = upconv(feat_out_channels[4], num_features)
         self.bn5 = nn.BatchNorm2d(num_features, momentum=0.01, affine=True, eps=1.1e-5)
 
@@ -231,6 +231,7 @@ class bts(nn.Module):
         self.reduc1x1 = reduction_1x1(num_features // 16, num_features // 32, self.params.max_depth, is_final=True)
         self.conv1 = torch.nn.Sequential(nn.Conv2d(num_features // 16 + 1 + 12, num_features // 16, 3, 1, 1, bias=False),
                                          nn.ELU())
+        self.class_linear = nn.Linear(num_features//16 + 1 + 12, self.num_classes)
         self.get_depth = torch.nn.Sequential(nn.Conv2d(num_features // 16, 1, 3, 1, 1, bias=False),
                                              nn.Sigmoid())
 
@@ -310,11 +311,14 @@ class bts(nn.Module):
 
         concat1 = torch.cat([upconv1, reduc1x1, depth_2x2_scaled_vp, depth_4x4_scaled_vp, depth_8x8_scaled_vp], dim=1)
         iconv1 = self.conv1(concat1)
+
+        linear_output = self.class_linear(concat1.transpose(1,3).transpose(1,2))
+
         final_depth = self.params.max_depth * self.get_depth(iconv1)
         if self.params.dataset == 'kitti':
             final_depth = final_depth * focal.view(-1, 1, 1, 1).float() / 715.0873
 
-        return depth_8x8_scaled, depth_4x4_scaled, depth_2x2_scaled, reduc1x1, final_depth
+        return depth_8x8_scaled, depth_4x4_scaled, depth_2x2_scaled, reduc1x1, final_depth, linear_output
 
 
 class encoder(nn.Module):
