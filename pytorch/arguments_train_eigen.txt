@@ -1,5 +1,5 @@
 --mode train
---model_name bts_vertical_test
+--model_name bts_my
 --encoder densenet161_bts
 --dataset kitti
 --data_path ../../../../mnt/dataset
@@ -21,6 +21,7 @@
 --multiprocessing_distributed
 --dist_url tcp://127.0.0.1:2345
 
+--checkpoint_path ./models/bts_my/model-epoch-19
 --log_freq 100
 --do_online_eval
 --eval_freq 500

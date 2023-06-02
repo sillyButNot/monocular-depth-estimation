@@ -185,7 +185,7 @@ class bts(nn.Module):
     def __init__(self, params, feat_out_channels, num_features=512):
         super(bts, self).__init__()
         self.params = params
-        self.num_classes = 256
+        self.num_classes = 60
         self.upconv5 = upconv(feat_out_channels[4], num_features)
         self.bn5 = nn.BatchNorm2d(num_features, momentum=0.01, affine=True, eps=1.1e-5)
 

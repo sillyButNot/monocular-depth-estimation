@@ -1,9 +1,9 @@
---encoder bts_vertical
+--encoder densenet161_bts
 --data_path ../../../../mnt/dataset/
 --dataset kitti
 --filenames_file ../train_test_inputs/eigen_test_files_with_gt.txt
---model_name bts_vertical
---checkpoint_path ./models/bts_vertical/model-epoch-30
+--model_name bts_my
+--checkpoint_path ./models/bts_my/model-77000-best_abs_rel_0.06076
 --input_height 352
 --input_width 1216
 --max_depth 80

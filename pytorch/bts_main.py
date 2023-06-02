@@ -19,7 +19,7 @@ import argparse
 import datetime
 import sys
 import os
-
+import torch.nn.functional as F
 import torch
 import torch.nn as nn
 import torch.nn.utils as utils
@@ -332,6 +332,18 @@ def online_eval(model, dataloader_eval, gpu, ngpus):
     return None
 
 
+def ordinal_loss(Y_pred, Y_true):
+    B, W, H, K = Y_pred.shape
+    P = F.softmax(Y_pred, dim=-1)
+
+
+    indices = torch.arange(K, device=Y_pred.device).unsqueeze(0).unsqueeze(0).unsqueeze(0)  # (1, 1, 1, K)
+    mask = indices < Y_true
+    loss = torch.log(P) * mask.float() + torch.log(1 - P) * (~mask).float()
+
+    return -loss.mean()
+
+
 def main_worker(gpu, ngpus_per_node, args):
     args.gpu = gpu
 
@@ -430,6 +442,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
     silog_criterion = silog_loss(variance_focus=args.variance_focus)
     cross_loss = nn.CrossEntropyLoss()
+
     start_time = time.time()
     duration = 0
 
@@ -466,24 +479,34 @@ def main_worker(gpu, ngpus_per_node, args):
                 mask = depth_gt > 1.0
 
             loss1 = silog_criterion.forward(depth_est, depth_gt, mask.to(torch.bool))
-            depth_class_reshape = depth_class.reshape(-1,1).squeeze(dim=-1).to(torch.int64)
-            depth_class_est_reshape = depth_class_est.reshape(-1,256)
-            loss2 = cross_loss(depth_class_est_reshape, depth_class_reshape)
+            # depth_class_reshape = depth_class.reshape(-1, 1).squeeze(dim=-1).to(torch.int64)
+            # depth_class_est_reshape = depth_class_est.reshape(-1, 256)
+            loss2 = ordinal_loss(depth_class_est, depth_class)
             loss = (loss1 + loss2) / 2
+
+            if np.isnan(loss1.cpu().item()):
+                loss = loss2
+                print("loss1 is Nan!!!!!!!!!!!!!!!!")
+            elif np.isnan(loss2.cpu().item()):
+                loss = loss1
+                print("loss2 is Nan!!!!!!!!!!!!!!!!")
+
             loss.backward()
             for param_group in optimizer.param_groups:
                 current_lr = (args.learning_rate - end_learning_rate) * (
-                            1 - global_step / num_total_steps) ** 0.9 + end_learning_rate
+                        1 - global_step / num_total_steps) ** 0.9 + end_learning_rate
                 param_group['lr'] = current_lr
 
             optimizer.step()
 
             if not args.multiprocessing_distributed or (
                     args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
-                print('[epoch][s/s_per_e/gs]: [{}][{}/{}/{}], lr: {:.12f}, loss: {:.12f}'.format(epoch, step,
-                                                                                                 steps_per_epoch,
-                                                                                                 global_step,
-                                                                                                 current_lr, loss))
+                print(
+                    '[epoch][s/s_per_e/gs]: [{}][{}/{}/{}], lr: {:.12f}, loss: {:.12f}, loss1: {:.12f}, loss2: {:.12f}'.format(
+                        epoch, step,
+                        steps_per_epoch,
+                        global_step,
+                        current_lr, loss, loss1, loss2))
                 if np.isnan(loss.cpu().item()):
                     print('NaN in loss occurred. Aborting training.')
                     return -1
@@ -645,6 +668,7 @@ def main():
     else:
         main_worker(args.gpu, ngpus_per_node, args)
 
+
 def set_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
@@ -653,6 +677,6 @@ def set_seed(seed):
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
 
+
 if __name__ == '__main__':
-    set_seed(seed=1234)
     main()
